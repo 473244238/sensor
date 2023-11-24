@@ -1,0 +1,150 @@
+1.用户注册：
+    @PostMapping("/register")
+    public BaseResponse<String> userRegister(@RequestBody @Valid UserRegisterRequest userRegisterRequest) {
+
+        User user = userService.userRegister(userRegisterRequest);
+        StpUtil.login(user.getId());
+
+        return ResultUtils.success(StpUtil.getTokenValue());
+    }
+
+接受参数：
+手机号。（进行格式的校验）
+密码。     
+手机验证码。
+
+try {
+            password = rsa.decryptStr(password, KeyType.PrivateKey);
+        } catch (Exception e) {
+            throw new BusinessException(PARAMS_ERROR, "密码未加密");
+        }
+
+
+        // 验证 手机号和验证码是否匹配
+        if (!verifyPhone(phone, code, REGISTER_CODE_KEY)) {
+            throw new BusinessException(PARAMS_ERROR, "验证码错误");
+        }
+
+
+        // 手机号不能重复
+        User one = userMapper.selectOne(new QueryWrapper<User>().eq("phone", phone));
+
+        if (BeanUtil.isNotEmpty(one)) {
+            throw new BusinessException(OPERATION_ERROR, "该手机号已经注册");
+        }
+ // 加密
+        String newPassword = SmUtil.sm3(id + password);
+stringRedisTemplate.opsForValue().set(USER_ROLE + user.getId(), user.getRole(), USER_ROLE_TTL, TimeUnit.HOURS);
+
+功能实现（手机，密码，手机号验证）
+密码采用sm3加密
+我们使用Spring的redis的操作类，封装了一个用户类
+使用redis的set方法：采用键值对封装类的对象（用户的角色类，时间）
+
+2.手机和密码登录
+参数：
+密码
+手机号码
+验证码
+@PostMapping("/login/by/password")
+    public BaseResponse<String> loginByPassword(@RequestBody @Valid PasswordLoginRequest loginRequest) {
+        User user = userService.loginByPassword(loginRequest);
+
+        StpUtil.login(user.getId());
+
+
+        return ResultUtils.success(StpUtil.getTokenValue());
+    }
+对类中的手机，密码进行校验
+用Stputil返回用户id作为token
+
+
+3.登出功能
+    @PostMapping("/logout")
+    public BaseResponse<Integer> userLogout(HttpServletRequest request) {
+        if (request == null) {
+            throw new BusinessException(ErrorCode.PARAMS_ERROR);
+        }
+        long id = Long.parseLong((String) StpUtil.getLoginId());
+        // 删除缓存
+        stringRedisTemplate.delete(USER_INFO + id);
+
+
+        StpUtil.logout();
+
+
+        return ResultUtils.success(null);
+    }
+1.先判断是否有用户是否在线
+2.让后通过取出token的值（用户的id)
+3.删除redis缓存的用户标志
+
+
+
+4.获取当前用户
+    @PostMapping("/current")
+    public BaseResponse<UserDTO> getCurrentUser() {
+        Long id = Long.valueOf((String) StpUtil.getLoginId());
+        // 获取经过脱敏处理后的userInfo
+        User user = userService.getUserInfoById(id);
+
+        UserDTO userDTO = BeanUtil.copyProperties(user, UserDTO.class);
+        userDTO.setPhone(DesensitizedUtil.mobilePhone(userDTO.getPhone()));
+
+        return ResultUtils.success(userDTO);
+    }
+
+实现类：
+ if (StrUtil.isNotEmpty(baseInfo)) {
+            stringRedisTemplate.expire(key, USER_INFO_TTL, TimeUnit.MINUTES);
+            return JSONUtil.toBean(baseInfo, User.class);
+        }
+
+        // 没有则查询数据库并写入redis
+        User user = userMapper.selectOne(new QueryWrapper<User>().eq("id", id));
+        if (BeanUtil.isEmpty(user)) {
+            throw new BusinessException(PARAMS_ERROR, "该用户不存在");
+        }
+
+        stringRedisTemplate.opsForValue().set(key, JSONUtil.toJsonStr(user), USER_INFO_TTL, TimeUnit.MINUTES);
+
+这里我们会先从redis取出对应key来判断用户是否存在，如果用户存在，则更新用户过期时间，若redis没有，则进行查询，找到对应的用户，并将其保存在redis,最后返回脱敏过的用户。
+
+
+
+6.更新密码
+参数：
+用户id
+手机号
+手机验证码
+新密码
+  /**
+     * 更新用户密码
+     *
+     * @return success
+     */
+    @PutMapping("/update/password")
+    public BaseResponse<String> updateUserPassword(@RequestBody @Valid UpdateUserPasswordRequest userPasswordRequest) {
+
+
+        userService.updatePassword(userPasswordRequest);
+
+        // 删除缓存
+        stringRedisTemplate.delete(USER_INFO + userPasswordRequest.getUserId());
+
+        StpUtil.logout();
+
+        return ResultUtils.success(null);
+    }
+
+1.判断手机验证码是否正确
+2.根据id找到对应的用户，校检手机验证码，密码是否正确
+3.对新密码加密，更换旧密码
+
+
+
+
+
+
+
+
