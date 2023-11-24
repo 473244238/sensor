@@ -1,0 +1,330 @@
+1.任务发布功能
+ public BaseResponse<Boolean> onlineTask(@RequestBody TaskOnlineRequest taskStatusRequest,
+                                                     HttpServletRequest request) {
+        if (taskStatusRequest == null || taskStatusRequest.getId() <= 0) {
+            throw new BusinessException(ErrorCode.PARAMS_ERROR);
+        }
+        long id = taskStatusRequest.getId();
+        // 判断是否存在
+        Task oldTask = taskService.getById(id);
+        if (oldTask == null) {
+            throw new BusinessException(ErrorCode.NOT_FOUND_ERROR);
+        }
+        // 判断该任务的type是否在正常使用
+        String type = oldTask.getType();
+        if (!typeService.getAllType().getData().contains(type)){
+            throw new BusinessException(ErrorCode.PARAMS_ERROR,"当前任务类型不可用");
+        }
+
+        //  判断是否审核通过
+        if (oldTask.getCheckStatus() != ReviewStatusEnum.PASS.getValue()) {
+            throw new BusinessException(ErrorCode.STATUS_ERROR);
+        }
+        // TODO 修改（仅本人和管理员可修改）
+        Task task = new Task();
+        task.setId(id);
+        task.setOnlineStatus(TaskStatusEnum.ONLINE.getValue());
+        boolean result = taskService.updateById(task);
+        return ResultUtils.success(result);
+    }
+
+参数：
+任务id
+上线状态
+1.判断参数是否有传入，判断id对应的任务是否存在
+2.判断这个任务的type是否正常使用
+3.判断是否被审核通过
+4.创建一个新任务，并设置为上线状态
+然后根据id进行修改为上线。
+
+
+2.下线功能
+    @ApiOperation(value = "任务下线接口")
+    @PostMapping("/offline")
+    public BaseResponse<Boolean> offlineTask(@RequestBody TaskOnlineRequest taskStatusRequest,
+                                                      HttpServletRequest request) {
+        if (taskStatusRequest == null || taskStatusRequest.getId() <= 0) {
+            throw new BusinessException(ErrorCode.PARAMS_ERROR);
+        }
+        long id = taskStatusRequest.getId();
+        // 判断是否存在
+        Task oldTask = taskService.getById(id);
+        if (oldTask == null) {
+            throw new BusinessException(ErrorCode.NOT_FOUND_ERROR);
+        }
+        // 仅本人或管理员可修改
+        Task task = new Task();
+        task.setId(id);
+        task.setOnlineStatus(TaskStatusEnum.OFFLINE.getValue());
+        boolean result = taskService.updateById(task);
+        return ResultUtils.success(result);
+    }
+
+与上线一样，先进行一系列验证，然后对其修改上线值。
+
+
+3.查询大任务包含的小任务数量
+    @GetMapping("/count/smallTask")
+    public BaseResponse<Long> getCountOfSmallTask(Long id,
+                                                  HttpServletRequest request) {
+        //判断为空
+        if (id == null) {
+            return ResultUtils.error(ErrorCode.NULL_ERROR);
+        }
+        Task task = taskService.getById(id);
+        //判断对象存在
+        if (task == null){
+            return ResultUtils.error(ErrorCode.NOT_FOUND_ERROR);
+        }
+        //判断是否为为大任务
+        if (task.getRootId() != -1){
+            return ResultUtils.error(ErrorCode.PARAMS_ERROR,"这是个小任务");
+        }
+        Long count = task.getNumberOfSmallTask();
+        return ResultUtils.success(count);
+    }
+
+1.先校验id为空
+2.判断对象是否存在
+3.判断是否为大任务
+4.数一下小任务
+
+
+4.创建任务
+ @ApiOperation(value = "创建任务")
+    @PostMapping("/add")
+    public BaseResponse<List<Long>> addTask(@RequestBody TaskAddRequest taskAddRequest, MultipartFile[] images) {
+        if (taskAddRequest == null) {
+            throw new BusinessException(ErrorCode.PARAMS_ERROR);
+        }
+
+        // 判断该任务的type是否在正常使用
+        String type = taskAddRequest.getType();
+        if (!typeService.getAllType().getData().contains(type)){
+            throw new BusinessException(ErrorCode.PARAMS_ERROR,"当前任务类型不可用");
+        }
+        Long rootId = taskAddRequest.getRootId();
+        //判断是否是子任务
+        if (!rootId.equals(BIGTASK_ROOTID)){
+            //查询父任务
+            Task rootTask = getTaskById(rootId).getData();
+            //更新父任务中的子任务数量
+            Long numberOfSmallTask = rootTask.getNumberOfSmallTask();
+            rootTask.setNumberOfSmallTask(++numberOfSmallTask);
+            taskService.updateById(rootTask);
+            //更新父任务中的maxPassed参数
+            //将小任务的已完成小任务和包含小任务数量锁定为-1，无实际意义
+            taskAddRequest.setNumberOfSmallTask(-1L);
+            taskAddRequest.setCompletedSmallTask(-1L);
+        }
+
+        List<Long> ids = new ArrayList();
+
+
+        for(int i = 0; i < taskAddRequest.getCoordinates().size();i++){
+            List<Double> coordinate = (List<Double>)taskAddRequest.getCoordinates().get(i);
+            Task task = new Task();
+            BeanUtils.copyProperties(taskAddRequest, task);
+            task.setLatitude(coordinate.get(0));
+            task.setLongitude(coordinate.get(1));
+            // 校验
+            //taskService.validAndHandleTask(task, true);
+            // 获取用户id 后填入字段信息
+            Long id = Long.valueOf((String) StpUtil.getLoginId());
+            task.setPublisherId(id);
+            task.setCheckStatus(TaskStatusEnum.CHECKED.getValue());
+            task.setOnlineStatus(ONLINE);
+            // 将用户添加的字段信息存入字段数据库
+            boolean result = taskService.save(task);
+            if (!result) {
+                throw new BusinessException(ErrorCode.OPERATION_ERROR);
+            }
+            ids.add(task.getId());
+//        if (images != null){
+//            taskService.updateTaskImages(task.getId(), images);
+//        }
+        }
+参数：task的基本属性+一些在地图的位置（经度+维度）
+1.判断参数是否为空
+2.判断类型是否在正常使用
+3.判断是否为子任务
+如果是子任务：
+（1）查询它的父任务
+（2）更新父任务的子任务的数量
+（3）将任务中包含的小任务为-1
+4.遍历位置数组
+（1）将位置经纬数放入task类中
+（2）将类进行保存到数据库中
+
+
+5.删除任务
+ @ApiOperation(value = "根据任务id删除任务")
+    @PostMapping("/delete")
+    public BaseResponse<Boolean> deleteTask(@RequestBody DeleteRequest deleteRequest, HttpServletRequest request) {
+        if (deleteRequest == null || deleteRequest.getId() <= 0) {
+            throw new BusinessException(ErrorCode.PARAMS_ERROR);
+        }
+        Long userId = Long.valueOf((String) StpUtil.getLoginId());
+        long id = deleteRequest.getId();
+        // 判断是否存在
+        Task oldTask = taskService.getById(id);
+        if (oldTask == null) {
+            throw new BusinessException(ErrorCode.NOT_FOUND_ERROR);
+        }
+        Long rootId = oldTask.getRootId();
+        // 仅本人或管理员可删除
+        if (!oldTask.getPublisherId().equals(userId) && !userService.isAdmin(request)) {
+            throw new BusinessException(ErrorCode.NO_AUTH);
+        }
+        boolean b = taskService.removeById(id);
+        if (b){
+            favoritesController.deleteCollectionByTaskId(id);
+            Task rootTask = taskService.getById(rootId);
+            Long numberOfSmallTask = rootTask.getNumberOfSmallTask();
+            rootTask.setNumberOfSmallTask(--numberOfSmallTask);
+            rootTask.setMaxPassed(numberOfSmallTask);
+            taskService.updateById(rootTask);
+            return ResultUtils.success(b);
+        }else{
+            return ResultUtils.error(ErrorCode.OPERATION_ERROR,"删除失败");
+        }
+    }
+
+参数：id
+1.判断id是否存在
+2.判断是否有用户登录且是否为管理员
+3.判断是否有父任务
+如果有父任务
+（1）将父任务中的子任务数量进行更新
+将此任务删除
+
+
+6.获取用户可见的列表(公开审核过的任务）
+    @ApiOperation(value = "展示用户可见的大任务列表", notes = "公开且审核通过的大任务, 暂未做分页")
+    @PostMapping("/list/publish/bigTask")
+    public BaseResponse<List<Task>> listMyTask(@RequestBody TaskQueryRequest taskQueryRequest,
+                                                         HttpServletRequest request) {
+        Task taskQuery = new Task();
+        if (taskQueryRequest != null) {
+            BeanUtils.copyProperties(taskQueryRequest, taskQuery);
+        }
+        // 先查询所有审核通过的 审核未通过的单独写一个接口
+        taskQuery.setRootId(-1L);
+        taskQuery.setCheckStatus(ReviewStatusEnum.PASS.getValue());
+        taskQuery.setOnlineStatus(ReviewStatusEnum.PASS.getValue());
+
+        QueryWrapper<Task> queryWrapper = getQueryWrapper(taskQueryRequest);
+        List<Task> taskList = taskService.list(queryWrapper);
+
+        return ResultUtils.success(taskList);
+    }
+
+1.设置一个新的任务类
+2.为这个类添加大任务标识，并为其附上审核的条件
+3.从数据库进行查询，返回列表。
+
+7.推荐任务功能
+参数：用户id
+    @PostMapping("/taskAllocation")
+    private BaseResponse<List<Task>> taskAllocation(@RequestBody TaskAllocationRequest taskAllocationRequest){
+        if (taskAllocationRequest == null) {
+            throw new BusinessException(ErrorCode.PARAMS_ERROR, "请求参数为空");
+        }
+//        System.out.println(taskAllocationRequest.getUserId());
+//        if (taskAllocationRequest.getUserId()<0){
+//            throw new BusinessException(ErrorCode.PARAMS_ERROR,"用户id有误");
+//        }
+        Long userId = Long.valueOf((String) StpUtil.getLoginId());
+//        Long userId = taskAllocationRequest.getUserId();
+        User user = userService.getById(userId);
+        if (user == null){
+            throw new BusinessException(ErrorCode.PARAMS_ERROR,"用户不存在");
+        }
+        long current = taskAllocationRequest.getCurrent();
+        long pageSize = taskAllocationRequest.getPageSize();
+
+        return ResultUtils.success(taskService.getTaskRecommend(user,taskAllocationRequest.getCurrent(),taskAllocationRequest.getPageSize()));
+    }
+
+
+实现类：
+       //任务状态限制
+        taskQueryWrapper.eq(Task::getCheckStatus, ReviewStatusEnum.PASS.getValue());
+        taskQueryWrapper.eq(Task::getOnlineStatus, ONLINE);
+        taskQueryWrapper.eq(Task::getSubmitStatus, UN_COMPLETED);
+        taskQueryWrapper.eq(Task::getRootId,-1);
+        List<Task> tasks = list(taskQueryWrapper);
+
+    for (TaskSubmit item : taskSubmits) {
+            //获取该提交对应的任务
+            Task history_task = getById(item.getTaskId());
+
+            //封装类
+            HistoryTasksVO historyTasksVO = new HistoryTasksVO();
+            historyTasksVO.setUserId(user.getId());
+            historyTasksVO.setTaskId(history_task.getId());
+            historyTasksVO.setSubmitTime(item.getCompleteTime());
+
+            //获取任务类型对应的id值
+            LambdaQueryWrapper<Type> typeQueryWrapper = new LambdaQueryWrapper();
+            typeQueryWrapper.eq(Type::getType, history_task.getType());
+            Type one = typeService.getOne(typeQueryWrapper);
+            historyTasksVO.setType(one.getId());
+
+            //拷贝
+            BeanUtils.copyProperties(history_task, historyTasksVO);
+
+            historyTasksVO.setDuration(history_task.getEndTime(), history_task.getStartTime());
+
+            //加入集合
+            historyTasksSet.add(historyTasksVO);
+        }
+
+ //获取用户偏好
+        double[] userPreferenceVector = getUserPreferenceVector(historyTasksSet);
+
+        // 获取推荐分数，采用余弦相似度计算兴趣偏好向量与所有任务特征向量的相似度
+        Map<Long, Double> recommendationScores = getRecommendationScores(candidateSet, userPreferenceVector);
+
+        List<Task> recommendedTasks = topNRecommendations.stream()
+                .map(taskId -> candidateSet.stream()
+                        .filter(task -> task.getId().equals(taskId))
+                        .findFirst()
+                        .orElse(null))
+                .filter(Objects::nonNull)
+                .collect(Collectors.toList());
+
+1.判断参数是否为空
+2.判断用户是否为空
+3.对任务进行限制：（1）判断任务是否审核过 （2）判断任务是否上线 (3) 判断任务是否位完成（4） 判断是否是父任务
+4.选择用户附近的范围
+5.如果任务只有5个，则直接返回
+6.根据用户提交的历史任务找到用户偏好
+7.通过推荐分数，采用余弦近似计算找到兴趣偏好向量与所有任务特征向量的相似度,获取推荐的id
+8.获取推荐任务id对应的任务
+
+
+
+8.查询任务进度
+   @PostMapping("/select/task/schedule")
+    public BaseResponse<TaskScheduleVO> selectTaskSchedule (@RequestBody TaskUpdateRequest taskUpdateRequest) {
+        Long id = taskUpdateRequest.getId();
+
+        Task task = taskService.getById(id);
+
+        if(task == null){
+            throw new BusinessException(ErrorCode.NOT_FOUND_ERROR);
+        }
+
+        TaskScheduleVO taskScheduleVO = new TaskScheduleVO();
+        taskScheduleVO.setMaxPassed(task.getMaxPassed());
+
+        taskScheduleVO.setCurrentPassed(task.getCurrentPassed());
+
+        return ResultUtils.success(taskScheduleVO);
+    }
+参数：任务的基本属性
+获取所有任务的通过量
+获取当前有多少任务通过
+将这两个属性保存在任务进度类
+返回
