@@ -1,0 +1,7 @@
+Integer WORK_ID=1 //终端id
+Integer DATACENTER_ID=1; //数据中心id
+String FILE_ROOT_PATH="/root/resource/" //文件存放的根目录
+String FILE_ICON_SUB_PATH="/icon/"  //用户头像存放的子路径
+String FILE_IMAGE_SUB_PATH="/images/" //任务图片存放的子路径
+String SUBMIT_IMAGES_SUB_PATH="/files/" //提交图片的存放的子路径
+
