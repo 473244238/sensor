@@ -1,0 +1,286 @@
+1.创建任务提交信息
+    @ApiOperation(value = "添加任务提交信息")
+    @PostMapping("/add")
+    public BaseResponse<Long> addTaskSubmit(@RequestBody TaskSubmitAddRequest taskAddRequest,MultipartFile[] images) {
+        if (taskAddRequest == null) {
+            throw new BusinessException(ErrorCode.PARAMS_ERROR);
+        }
+        TaskSubmit taskSubmit = new TaskSubmit();
+        //获取用户信息
+        Long userId = Long.valueOf((String) StpUtil.getLoginId());
+        //获取任务信息
+        Task task = taskService.getById(taskAddRequest.getTaskId());
+        if (!task.getSubmitStatus().equals(UN_COMPLETED)){
+            throw  new BusinessException(ErrorCode.OPERATION_ERROR,"当前任务不允许提交，可能是因为已完成或者已过期");
+        }
+
+
+        BeanUtils.copyProperties(taskAddRequest, taskSubmit);
+        taskSubmit.setSubmitterId(userId);
+        taskSubmit.setRootTaskId(task.getRootId());
+        taskSubmit.setType(task.getType());
+        // TODO 校验
+
+        // 获取用户id 后填入字段信息
+        taskSubmit.setStatus(TaskStatusEnum.UNCHECKED.getValue());
+        // 将用户添加的字段信息存入字段数据库
+        boolean result = taskSubmitService.save(taskSubmit);
+        if (!result) {
+            throw new BusinessException(ErrorCode.OPERATION_ERROR);
+        }
+        return ResultUtils.success(taskSubmit.getId());
+    1.参数：（1）任务id (2) 任务描述 （3）数量 （4）纬度（位置） （5）经度
+1.判断接受的参数是否为空
+2.创建权限的信息提交类
+3.获取当前用户信息
+4.判断任务是否已完成或过期
+5.得到这个任务并将它赋值到提交信息类中.
+6.将这个信息类保存到数据库中。
+
+2.根据id删除
+    @ApiOperation(value = "根据任务id删除任务")
+    @PostMapping("/delete")
+    public BaseResponse<Boolean> deleteTaskSubmit(@RequestBody DeleteRequest deleteRequest, HttpServletRequest request) {
+        if (deleteRequest == null || deleteRequest.getId() <= 0) {
+            throw new BusinessException(ErrorCode.PARAMS_ERROR);
+        }
+        Long id = deleteRequest.getId();
+        // 判断是否存在
+        TaskSubmit oldTaskSubmit = taskSubmitService.getById(id);
+        if (oldTaskSubmit == null) {
+            throw new BusinessException(ErrorCode.NOT_FOUND_ERROR);
+        }
+        if (oldTaskSubmit.getStatus() != TaskStatusEnum.UNCHECKED.getValue()){
+            throw new BusinessException(ErrorCode.STATUS_ERROR,"该任务不可删除");
+        }
+
+        boolean b = taskSubmitService.removeById(id);
+        return ResultUtils.success(b);
+    }
+参数：id
+1.通过id看这个任务提交信息是否存在。
+2.判断这个任务提交信息是否在审查阶段
+3.删掉任务提交信息
+
+
+3.更新任务提交信息
+    @ApiOperation(value = "更新任务")
+    @PostMapping("/update")
+    public BaseResponse<Boolean> updateTaskSubmit(@RequestBody TaskSubmitUpdateRequest taskUpdateRequest) {
+        if (taskUpdateRequest == null || taskUpdateRequest.getId() <= 0) {
+            throw new BusinessException(ErrorCode.PARAMS_ERROR);
+        }
+
+        TaskSubmit task = new TaskSubmit();
+
+        if (task.getStatus() != null){
+            if (task.getStatus() == TaskStatusEnum.UNCHECKED.getValue()){
+                throw new BusinessException(ErrorCode.PARAMS_ERROR,"只可更新未审核的提交");
+            }
+        }
+
+        // bean拷贝 将前端发来要更新的信息封装进task对象中
+        // copyProperties(Object source, Object target)
+        BeanUtils.copyProperties(taskUpdateRequest, task);
+        // TODO 参数校验
+        // taskSubmitService.validAndHandleTaskSubmit(task, false);
+        long id = taskUpdateRequest.getId();
+        // 判断是否存在
+        TaskSubmit oldTaskSubmit = taskSubmitService.getById(id);
+        if (oldTaskSubmit == null) {
+            throw new BusinessException(ErrorCode.NOT_FOUND_ERROR);
+        }
+        // 更新之后需要发布者重新审核
+//        task.setStatus(TaskStatusEnum.UNCHECKED.getValue());
+        if (task.getStatus() != null){
+            Long taskId = oldTaskSubmit.getTaskId();
+            Integer status = taskUpdateRequest.getStatus();
+
+            checkSubmitStatus(taskId,status);
+        }
+
+
+        boolean result = taskSubmitService.updateById(task);
+        return ResultUtils.success(result);
+    }
+
+
+    public void checkSubmitStatus(Long taskId, Integer status) {
+        Task task = taskService.getById(taskId);
+
+        if (status != 1 || task.getRootId() == -1){
+            return;
+        }
+
+        LambdaQueryWrapper<TaskSubmit> lambdaQueryWrapper = new LambdaQueryWrapper<>();
+        lambdaQueryWrapper.eq(TaskSubmit::getTaskId,taskId);
+        lambdaQueryWrapper.eq(TaskSubmit::getStatus, TaskStatusEnum.CHECKED.getValue());
+        Long count = taskSubmitService.count(lambdaQueryWrapper);
+        task.setCurrentPassed(count+1);
+
+        if(count + 1 == task.getMaxPassed()){
+            task.setSubmitStatus(COMPLETED);
+
+            Long rootId = task.getRootId();
+            Task rootTask = taskService.getById(rootId);
+            rootTask.setCurrentPassed(rootTask.getCurrentPassed()+1);
+            if (rootTask.getCurrentPassed().equals(rootTask.getNumberOfSmallTask())){
+                rootTask.setSubmitStatus(COMPLETED);
+            }
+
+            taskService.updateById(rootTask);
+        }
+
+        taskService.updateById(task);
+
+    } 
+参数：任务提交信息的基本属性
+1.判断接受的参数是否为空
+2.判断提交信息表是否是未审核。
+3。获取更新任务提交的id.
+4.获取原来的任务的提交信息
+5.更新后需要发布者重新审核。
+6.通过id获取这个任务
+7.判断这个提交是否是已审核，如果没审核或审核没过，则直接返回，否则进行重新审核，也要判断它是否是小任务
+8.得到提交任务（已审核）的数量
+设置当前审核数量加1
+如果刚好审核完，则标识完成
+找到它的父任务，进行加1
+9.进行更新
+
+
+4.分页获取列表（当前用户看到自身的提交）
+  @ApiOperation(value = "分页获取任务提交列表", notes = "请求对象中有的字段都能查 暂不支持模糊查询")
+    @PostMapping("/list/page")
+    public BaseResponse<TaskSubmitVO> listTaskSubmitByPage(@RequestBody TaskSubmitQueryRequest taskQueryRequest,
+                                                                     HttpServletRequest request) {
+        long current = taskQueryRequest.getCurrent();
+        long size = taskQueryRequest.getPageSize();
+        // 限制爬虫
+        if (size > 20) {
+            throw new BusinessException(ErrorCode.PARAMS_ERROR);
+        }
+
+        LambdaQueryWrapper<TaskSubmit> lambdaQueryWrapper = new LambdaQueryWrapper<>();
+        //获取用户信息
+        Long userId = Long.valueOf((String) StpUtil.getLoginId());
+        lambdaQueryWrapper.eq(TaskSubmit::getSubmitterId,userId);
+        //status
+        Integer status = taskQueryRequest.getStatus();
+        if (status != null){
+            lambdaQueryWrapper.eq(TaskSubmit::getStatus,status);
+        }
+        //添加一行代码，使结果按照createTime排序
+        lambdaQueryWrapper.orderByDesc(TaskSubmit::getCreateTime);
+
+        Page<TaskSubmit> taskPage =
+                taskSubmitService.page(new Page<>(current, size), lambdaQueryWrapper);
+
+        List<TaskSubmit> taskSubmitList = taskPage.getRecords();
+        List<TaskSubmitDetail> taskSubmitDetails = new ArrayList<>();
+
+        for (TaskSubmit submit : taskSubmitList){
+            TaskSubmitDetail taskSubmitDetail = new TaskSubmitDetail();
+            //获取任务信息
+            Task task = taskService.getById(submit.getTaskId());
+
+            if (task == null){
+                throw new BusinessException(ErrorCode.NULL_ERROR,"存在已被删除的任务");
+            }
+
+            taskSubmitDetail.setSubmitId(submit.getId());
+            taskSubmitDetail.setSubmitLatitude(submit.getLatitude());
+            taskSubmitDetail.setSubmitLongitude(submit.getLongitude());
+            taskSubmitDetail.setTaskName(task.getTitle());
+            taskSubmitDetail.setSubmitTime(convertDateToString(submit.getCreateTime()));
+            taskSubmitDetail.setDescription(submit.getDescription());
+            taskSubmitDetail.setStatus(submit.getStatus());
+            if (submit.getNumericalValue() != null){
+                taskSubmitDetail.setNumber(submit.getNumericalValue());
+            }
+            if (submit.getFilesPath() != null){
+                taskSubmitDetail.setFilePath(submit.getFilesPath());
+            }
+
+            taskSubmitDetails.add(taskSubmitDetail);
+        }
+
+        TaskSubmitVO taskSubmitVO = new TaskSubmitVO();
+        taskSubmitVO.setTaskSubmitDetails(taskSubmitDetails);
+        taskSubmitVO.setNumberOfSubmit(taskPage.getTotal());
+
+
+        return ResultUtils.success(taskSubmitVO);
+    }
+
+参数：
+id
+任务id
+父任务id
+提交者id
+状态
+1.先获取前端发来的分页与分页大小
+2.获取一个属于tasksubmit的列表（查询条件：1.用户,2.状态，时间排序)
+3.将这个tasksubmit的列表传到tasksubmitdetails中
+4.同时要判断提交的任务是否为空
+5.最后返回查询到的数量和Page
+
+5.更新提交信息的任务图片
+@PostMapping("/updateImages/{submitId}")
+    public BaseResponse<List<String>> updateSubmitImages(@PathVariable("submitId") Long submitId, MultipartFile[] images) {
+        if (images == null) {
+            throw new BusinessException(ErrorCode.PARAMS_ERROR, "请求参数为空");
+        }
+
+        Long id = Long.valueOf((String) StpUtil.getLoginId());
+
+        List<String> paths = taskSubmitService.updateSubmitImages(submitId,images);
+
+        return ResultUtils.success(paths);
+    }
+
+实现类
+    public List<String> updateSubmitImages(Long submitId, MultipartFile[] images) {
+
+        TaskSubmit taskSubmit = getById(submitId);
+
+        List<String> paths = new ArrayList<>();
+
+        for (MultipartFile image : images) {
+            if (StrUtil.isNotEmpty(taskSubmit.getFilesPath())) {
+                //获取旧文件名
+                String[] oldFilePath = taskSubmit.getFilesPath().split("/");
+                String oldFileName = oldFilePath[oldFilePath.length - 1];
+                //删除旧文件
+                FileUtils.delete(SUBMIT_IMAGES_SUB_PATH, oldFileName);
+            }
+
+            try {
+                String path = FileUtils.upload(SUBMIT_IMAGES_SUB_PATH, image);
+//                //更新redis缓存
+//                stringRedisTemplate.opsForValue().set(TASK_INFO + taskId, JSONUtil.toJsonStr(task));
+                paths.add(path);
+            } catch (IOException e) {
+//                log.error("更新任务图片失败=====》{}", e.getLocalizedMessage());
+                throw new BusinessException(SYSTEM_ERROR, e.getLocalizedMessage());
+            }
+        }
+
+        String path = String.join(",",paths);
+        taskSubmit.setFilesPath(path);
+        boolean i = updateById(taskSubmit);
+        if (!i) {
+            log.error("更新任务图片失败");
+            throw new BusinessException(SYSTEM_ERROR, "更新任务图片失败");
+        }
+
+        return paths;
+    }
+参数：提交id
+(1)根据提交信息的id得到提交信息的内容。
+(2)创建一个数组路径
+(3)得到之前图片的路径
+(4)获取之前图片的文件名并将其删除
+(5)得到新的图片路径，并将其添加到数组
+（6）返回新的图片的路径
+
