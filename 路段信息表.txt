@@ -1,0 +1,212 @@
+路段类：
+1.id:路段id
+2.name:街道名称
+3.headCoordinate:路段头部经纬度
+4.tailCoordinate:路段尾部结尾度
+5.centerCoordinate:路段中点经纬度
+6.overallHeadCoordinate: 整条街道头部经纬度
+7.overallTailCCoordinate:整条街道尾部经纬度
+
+1.对道路的数据矫正（例如计算中间经纬度）
+@PostMapping("/check")
+    public void check() {
+        roadService.check();
+    }
+
+实现类：
+    @Override
+    public void check() {
+        //获取所有路段信息
+        List<Road> roadList = list();
+
+        //计算经纬度中点
+        for (Road road:roadList){
+            //获取首尾经纬度字符串
+            String[] coordinate = getCoordinate(road);
+            //获取head经纬度
+            Double[] headCoordinate = splitCoordinate(coordinate[0]);
+            //获取tail经纬度
+            Double[] tailCoordinate = splitCoordinate(coordinate[1]);
+            //获取center经纬度
+            Double center0 = (headCoordinate[0] + tailCoordinate[0])/2;
+            Double center1 = (headCoordinate[1] + tailCoordinate[1])/2;
+            String centerCoordinate = center0.toString()+","+center1.toString();
+            road.setCenterCoordinate(centerCoordinate);
+            saveOrUpdate(road);
+        }
+    }
+    @Override
+    public String[] getCoordinate(Road road) {
+        String[] coordinate = new String[2];
+        coordinate[0] = road.getHeadCoordinate();
+        coordinate[1] = road.getTailCoordinate();
+        return coordinate;
+    }
+    @Override
+    public Double[] splitCoordinate(String coordinate) {
+        //分割经纬度
+        String[] coordinates = coordinate.split(",");
+        Double[] result = new Double[coordinates.length];
+        //转化为double类型
+        result[0] = Double.parseDouble(coordinates[0]);
+        result[1] = Double.parseDouble(coordinates[1]);
+        return result;
+    }
+1.先获取所有的路段信息并存储一张表中。
+2.对表中的每一个路段进行分解
+3.获取到它的首尾经纬度
+4.在把它的经纬度进行拆分矢量
+5.通过矢量计算得到中间经纬度
+6.对路段进行更新并返回
+
+
+2.添加一个路段提交表
+    @PostMapping("/add")
+    public BaseResponse<Long> add(@RequestBody AddRoadSubmit addRoadSubmit) {
+        if (addRoadSubmit == null) {
+            return ResultUtils.error(NULL_ERROR);
+        }
+
+        return roadSubmitService.add(addRoadSubmit);
+    }
+
+参数：
+1.number(宽松度）
+2.提交时的经纬度（coordinate)[前为经度，后为纬度,用逗号隔开]
+实现类：
+    @Override
+    public BaseResponse<Long> add(AddRoadSubmit addRoadSubmit) {
+        Long userId = Long.valueOf((String) StpUtil.getLoginId());
+
+        RoadSubmit roadSubmit = new RoadSubmit();
+        BeanUtils.copyProperties(addRoadSubmit, roadSubmit);
+
+        //设置提交者id
+        roadSubmit.setUserId(userId);
+
+        //获取经纬度
+        String coordinate = roadSubmit.getCoordinate();
+        Double[] coordinates = roadService.splitCoordinate(coordinate);
+        //根据经纬度找到对应的路段id
+        roadSubmit.setRoadId(roadService.getRoadIdByCoordinate(coordinates));
+
+        save(roadSubmit);
+
+        return ResultUtils.success(roadSubmit.getId());
+    }
+1.创建新的提交类信息
+2.将提交信息的类复制到新的类
+3.设置提交者id
+4.将前端的经纬度分割开来
+5.并将路径提交信息保存在数据库中。
+
+3.随机生成路径
+   @PostMapping("/add/random")
+    public BaseResponse<Long> addRandom() {
+        return roadSubmitService.generateData();
+    }
+
+@Override
+    public BaseResponse<Long> generateData() {
+
+        Long count = 0L;
+
+        // 生成每个街道的数据
+        for (long roadId = 1; roadId <= 57; roadId++){
+            // 获取当前时间
+            Date currentTime = new Date();
+            Calendar calendar = Calendar.getInstance();
+            calendar.setTime(currentTime);
+
+            //生成一周后的数据
+//            calendar.add(Calendar.HOUR_OF_DAY, 14);
+
+            // 生成一周的数据
+            for (int i = 0; i < 40; i++)  {
+                //跳过凌晨时间段
+                if (i % 24 <= 12 && i % 24 >= 4){
+                    calendar.add(Calendar.HOUR_OF_DAY, 1);
+                    continue;
+                }
+                // 随机生成0-30之间的车位数
+                Random random = new Random();
+                int number = random.nextInt(31);
+
+                // 确保相邻时刻的数据变化不会太大
+                if (i > 0) {
+//                    //生成初始数据
+//                    RoadSubmit lastSubmit = getLastSubmitByRoadAndTime(roadId, calendar.getTime());
+
+                    //生成之后数据
+                    //获得一周前数据
+                    calendar.add(Calendar.HOUR_OF_DAY, -168);
+                    RoadSubmit lastSubmit = getLastSubmitByRoadAndTime(roadId, calendar.getTime());
+                    calendar.add(Calendar.HOUR_OF_DAY, 168);
+                    if (lastSubmit != null) {
+                        int maxChange = 5; // 最大允许变化的车位数
+                        int change = Math.abs(number - lastSubmit.getNumber());
+                        if (change > maxChange) {
+                            // 如果变化超过最大允许值，将number调整为符合要求的值
+                            if (number % 2 == 0) {
+                                number = lastSubmit.getNumber() + (int)(Math.random()*5);
+                            }else{
+                                number = lastSubmit.getNumber() - (int)(Math.random()*5);
+                            }
+                            if (number > 30) {
+                                number = 30;
+                            }
+                            if (number < 0) {
+                                number = 0;
+                            }
+                        }
+                    }
+                }
+
+                // 创建并保存RoadSubmit对象
+                RoadSubmit roadSubmit = new RoadSubmit();
+                roadSubmit.setUserId(-1L);
+                roadSubmit.setRoadId(roadId);
+                roadSubmit.setNumber(number);
+                roadSubmit.setTime(calendar.getTime());
+                save(roadSubmit);
+
+                // 增加一小时
+                calendar.add(Calendar.HOUR_OF_DAY, 1);
+                count++;
+            }
+        }
+
+        return ResultUtils.success(count);
+
+    }
+
+    public RoadSubmit getLastSubmitByRoadAndTime(Long roadId, Date time) {
+        QueryWrapper<RoadSubmit> queryWrapper = new QueryWrapper<>();
+        queryWrapper.eq("road_id", roadId)
+                .lt("time", time)
+                .orderByDesc("time")
+                .last("LIMIT 1");
+
+        RoadSubmit lastSubmit = roadSubmitMapper.selectOne(queryWrapper);
+
+        if (lastSubmit == null) {
+            // 如果没有找到最后一次提交的记录，可以根据业务需求创建一个默认值
+            // 这里我们创建一个默认的RoadSubmit对象
+            Random random = new Random();
+            lastSubmit = new RoadSubmit();
+            lastSubmit.setRoadId(roadId);
+            lastSubmit.setNumber(random.nextInt(31)); // 生成随机默认车位
+            lastSubmit.setTime(time);
+        }
+
+        return lastSubmit;
+    }
+
+参数：无
+生成每个街道的数据
+获取当前时间
+获取一周后的数据
+随机生成0-30之间的车位数
+确保数据变化不是很大
+最后生成数据并保存在数据库
+
