@@ -1,0 +1,135 @@
+类：
+1.用户id;userId
+2.任务Id或提交任务id
+3.消息类型：0：tId:大任务
+                      1:  tId:小任务
+                      2：tId:任务提交Id,可编辑(发布者的数据审核通知）
+                      3: tId:任务提交Id,仅查看(提交者的数据审核成功/失败通知）
+type
+4.消息标题： title
+5.消息内容：content
+6.消息状态： 0：未读 1：已读
+7.创建时间
+8.删除 isDelete
+
+
+1.获取用户对管理员的消息
+   /**
+     * 获取当前用户信息列表
+     *
+     * @param userId    用户id
+     * @param type      消息类型
+     * @param timestamp 时间戳
+     * @param page      页数
+     * @param size      一页所呈现的信息数
+     * @return list
+     */
+    @GetMapping("/list")
+    private BaseResponse< PageBean<MessageDTO>> getUserMessageList(
+            @RequestParam("userId") Long userId,
+            @RequestParam(value = "type", defaultValue = "-1") Integer type,
+            @RequestParam(value = "timestamp", defaultValue = "-1") Long timestamp,
+            @RequestParam(value = "page", defaultValue = "1") Integer page,
+            @RequestParam(value = "size", defaultValue = "10") Integer size) {
+
+        Long id = Long.valueOf((String) StpUtil.getLoginId());
+        if (!Objects.equals(userId, id)) {
+            throw new BusinessException(ErrorCode.PARAMS_ERROR, "id错误");
+        }
+
+        // 如果类型指定，则只查询指定类型，如果没有指定，则查询全部
+        type = (type==-1)? null:type;
+
+
+        // 如果时间戳未指定，则默认使用当前时间
+        timestamp = (timestamp == -1) ? System.currentTimeMillis() : timestamp;
+
+
+
+      PageBean<MessageDTO> list =  messageService.getMessageListByIdAndType(userId,type,timestamp, page, size);
+
+        return ResultUtils.success(list);
+    }
+实现类
+     Page<Message> page = new Page<>(pageNum, pageSize);
+
+        LambdaQueryWrapper<Message> queryWrapper = new LambdaQueryWrapper<>();
+
+        // 如果类型指定，则只查询指定类型，如果没有指定，则查询全部
+        if (type != null) {
+            queryWrapper.eq(Message::getType, type);
+        }
+        Timestamp dateTime = new Timestamp(timestamp);
+
+        // 构建查询语句
+        queryWrapper.eq(Message::getUserId, userId)
+                .orderByAsc(Message::getStatus)
+                .orderByDesc(Message::getCreateTime)
+                .lt(Message::getCreateTime, dateTime);
+
+
+        Page<Message> messagePage = messageMapper.selectPage(page, queryWrapper);
+
+        if (messagePage.getRecords() == null || messagePage.getRecords().size() == 0) {
+            return null;
+        }
+
+        // 将message转换成messageDTO
+        List<MessageDTO> messageDTOS = messagePage.getRecords().stream()
+                .map(message -> BeanUtil.copyProperties(message, MessageDTO.class))
+                .collect(Collectors.toList());
+
+        // 计算未读消息数
+        queryWrapper.eq(Message::getStatus, 0);
+        int unreadNum = Math.toIntExact(messageMapper.selectCount(queryWrapper));
+
+        // 将结果封装进PageBean
+        PageBean<MessageDTO> result = new PageBean<>();
+
+        result.setTotalPage((int) messagePage.getPages());
+        result.setCurrentPage(pageNum);
+        result.setSize(pageSize);
+        result.setTimestamp(timestamp);
+        result.setType(type);
+        result.setTotalNum((int) messagePage.getTotal());
+        result.setUnreadNum(unreadNum);
+        result.setResultList(messageDTOS);
+
+        return result;
+    }
+参数：
+1.用户id
+2.类型
+3.时间戳
+4.页数大小
+5.结果的分页
+
+(1)判断id是否与在线的用户id是否相等
+(2)指定的类型，如果类型为-1，则为null,则为指定的类型
+(3)确定时间戳，如果时间未确定，则默认当前时间
+(4)创建一个分页结构器
+(5)根据条件得到message的分页
+(6)判断这个分页是否为空
+(7)将message转化成messageDTO
+(8) 得到用户未读得消息数
+(9)将结果封装进PageBean(每个消息的时间，消息的数量，消息的类型，未读的消息，消息的总内容）
+
+
+2.改变消息状态
+    private BaseResponse<String> ChangeMessageStatus(@Valid @RequestBody MessageUpdateDTO messageUpdateDTO) {
+        Long id = Long.valueOf((String) StpUtil.getLoginId());
+        Long userId = messageUpdateDTO.getUserId();
+        if (!Objects.equals(id, userId)) {
+            throw new BusinessException(ErrorCode.PARAMS_ERROR, "id错误");
+        }
+        Integer[] messageIds = messageUpdateDTO.getMessageIds();
+
+        messageService.updateMessageStatus(id, messageIds);
+
+        return ResultUtils.success(null);
+    }
+参数：
+用户id
+消息id集合
+1.判断用户id是否对应
+2.将消息id列表放入实现类中，并将对应的类的状态改为已读

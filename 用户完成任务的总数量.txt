@@ -1,0 +1,104 @@
+1.看用户对这个任务的贡献度  
+
+public BaseResponse<ContributionVO> getContribution() {
+        Long userId = Long.valueOf((String) StpUtil.getLoginId());
+        ContributionVO contributionVO = new ContributionVO();
+
+        //累计发布任务数量
+        LambdaQueryWrapper<Task> lambdaQueryWrapper1 = new LambdaQueryWrapper<>();
+        lambdaQueryWrapper1.eq(Task::getPublisherId, userId);
+        lambdaQueryWrapper1.eq(Task::getRootId, -1);
+        List<Task> taskList1 = taskService.list(lambdaQueryWrapper1);
+        contributionVO.setNumberOfPublishTask(taskList1.size());
+
+        //获得提交记录的数量
+        LambdaQueryWrapper<Task> lambdaQueryWrapper2 = new LambdaQueryWrapper<>();
+        lambdaQueryWrapper2.eq(Task::getPublisherId, userId);
+        lambdaQueryWrapper2.ne(Task::getRootId, -1);
+        List<Task> taskList2 = taskService.list(lambdaQueryWrapper2);
+        Long sum = taskList2.stream()
+                .mapToLong(Task::getCurrentPassed)
+                .sum();
+        contributionVO.setNumberOfReceive(sum.intValue());
+
+        //参与任务数量
+        LambdaQueryWrapper<TaskSubmit> lambdaQueryWrapper3 = new LambdaQueryWrapper<>();
+        lambdaQueryWrapper3.eq(TaskSubmit::getSubmitterId, userId);
+        List<TaskSubmit> taskSubmitList3 = taskSubmitService.list(lambdaQueryWrapper3);
+        long count = taskSubmitList3.stream()
+                .map(TaskSubmit::getTaskId)
+                .distinct()
+                .count();
+        contributionVO.setNumberOfParticipateInTask((int)count);
+
+        //记录被接受数量
+        lambdaQueryWrapper3.eq(TaskSubmit::getStatus,1);
+        contributionVO.setNumberOfBeReceivedTask(taskSubmitService.list(lambdaQueryWrapper3).size());
+
+        //最常完成任务类型
+        Map<String, Integer> typeCountMap = new HashMap<>();
+
+        for (TaskSubmit taskSubmit : taskSubmitList3) {
+            Long taskId = taskSubmit.getTaskId();
+            Task task = taskService.getById(taskId);
+            if (task != null) {
+                String type = task.getType();
+                typeCountMap.put(type, typeCountMap.getOrDefault(type, 0) + 1);
+            }
+        }
+
+        String mostFrequentType = new String();
+        if (typeCountMap.size() > 0) {
+            mostFrequentType = Collections.max(typeCountMap.entrySet(), Map.Entry.comparingByValue()).getKey();
+        }else {
+            mostFrequentType = "你还没有完成过任务哦";
+        }
+
+        contributionVO.setTaskType(mostFrequentType);
+
+        //第一次发布任务的时间
+        Task MostEarlyTime = taskList1.stream()
+                .min(Comparator.comparing(Task::getCreateTime))
+                .orElse(null);
+
+        if (MostEarlyTime == null){
+            contributionVO.setMostSubmitTime("你还没有发布过任务哦");
+        }else{
+            contributionVO.setMostSubmitTime(MostEarlyTime.getCreateTime().toString());
+        }
+
+
+        //第一次完成任务的时间
+        TaskSubmit MostCompleteTime = taskSubmitList3.stream()
+                .min(Comparator.comparing(TaskSubmit::getCreateTime))
+                .orElse(null);
+
+        if (MostCompleteTime == null){
+            contributionVO.setMostSubmitTime("你还没有完成过任务哦");
+        }else{
+            contributionVO.setMostCompleteTime(MostCompleteTime.getCreateTime().toString());
+        }
+
+        //最常提交任务的地点为
+
+
+        return ResultUtils.success(contributionVO);
+    }
+
+类：ContributionVo:
+1.累计发布的任务数量
+2.获得提交记录的数量
+3.参与任务的数量
+4.记录被接受的任务数量
+5.第一次发布任务的时间
+6.第一次完成任务的时间
+
+（1）计算得到累计接受任务的数量
+（2）计算累计提交记录的数量
+（3）计算累计参与任务的数量
+（4）记录被接受数量
+（5）记录经常完成任务类型
+（6）记录还没有完成过的任务
+（7）记录第一次发布任务的时间
+（8）记录第一次完成人物的时间
+发回整个完整的贡献度
